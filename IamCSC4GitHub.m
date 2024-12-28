@@ -1,0 +1,116 @@
+function [X,W1,W2,K1,K2,E1,E2,Y1,Y2,Z,lr]=IamCSC4GitHub(HSI,LiDAR,X1,X2,d,b,sigma,delta,alpha1,alpha2,beta,lambda,lr,epoch,LiDARweight,X,W1,W2,K1,K2,E1,E2,Y1,Y2,Z)
+P=zeros(d,d);
+index=1;
+for i=1:d
+    P(i,index:min(index+sigma-1,d))=1;
+    index=index+1;
+    P(i,:)=P(i,:)/(sum(P(i,:)));
+end
+Hx=zeros(size(HSI,2),size(HSI,2));
+Hy=zeros(size(HSI,1),size(HSI,1));
+for i=1:size(HSI,2)
+    Hx(i,i)=-1;
+    if i+1<=size(HSI,2)
+        Hx(i,i+1)=1;
+    end
+end
+for i=1:size(HSI,1)
+    Hy(i,i)=-1;
+    if i+1<=size(HSI,1)
+        Hy(i,i+1)=1;
+    end
+end
+Hy(size(HSI,1),1)=1;
+Hx(size(HSI,2),1)=1;
+Bb=ones(b,1)/b;
+Bd=ones(d,1)/d;
+jian=zeros(size(HSI,1),size(HSI,2),d);
+V_index=d*Normalization(LiDAR);
+for i=1:size(jian,1)
+    for j=1:size(jian,2)
+        jian(i,j,:)=reshape(normpdf(linspace(0,d,d),V_index(i,j),delta),1,1,d);
+    end
+end
+jian=reshape(jian,size(jian,1)*size(jian,2),size(jian,3));
+jian=jian';
+judge1_old=100;
+judge1=50;
+for i=1:epoch
+    X_change=reshape(permute(reshape(X,d,size(HSI,1),size(HSI,2)),[1,3,2]),d,size(HSI,1)*size(HSI,2));
+    X1_change=reshape(permute(reshape(X1,b,size(HSI,1),size(HSI,2)),[1,3,2]),b,size(HSI,1)*size(HSI,2));
+    M1=Z+E1-Y1/lambda;
+    M2=Z+E2-Y2/lambda;
+    delta1=X*W1*W1'-K1*X1*W1'+LiDARweight*(X*W2*W2'-K2*X2*W2');
+    delta2_a=Bd*Bd';
+    delta2_a=delta2_a*X;
+    delta2_a=reshape(delta2_a,d*size(HSI,1),size(HSI,2));
+    delta2_a=delta2_a*Hx*Hx';
+    delta2_a=reshape(delta2_a,d,size(HSI,1),size(HSI,2));
+    delta2_b=Bd*Bb';
+    delta2_b=delta2_b*X1;
+    delta2_b=reshape(delta2_b,d*size(HSI,1),size(HSI,2));
+    delta2_b=delta2_b*Hx*Hx';
+    delta2_b=reshape(delta2_b,d,size(HSI,1),size(HSI,2));
+    delta2_c=Bd*Bd';
+    delta2_c=delta2_c*X_change;
+    delta2_c=reshape(delta2_c,d*size(HSI,2),size(HSI,1));
+    delta2_c=delta2_c*Hy*Hy';
+    delta2_c=reshape(delta2_c,d,size(HSI,2),size(HSI,1));
+    delta2_c=permute(delta2_c,[1,3,2]);
+    delta2_d=Bd*Bb';
+    delta2_d=delta2_d*X1_change;
+    delta2_d=reshape(delta2_d,d*size(HSI,2),size(HSI,1));
+    delta2_d=delta2_d*Hy*Hy';
+    delta2_d=reshape(delta2_d,d,size(HSI,2),size(HSI,1));
+    delta2_d=permute(delta2_d,[1,3,2]);
+    delta2=delta2_a-delta2_b+delta2_c-delta2_d;
+    delta2=reshape(delta2,d,size(HSI,1)*size(HSI,2));
+    delta3=P'*P*X-P*jian;
+    decent_X=delta1+alpha1*delta2+alpha2*delta3;
+    lr=cal_lr(lr,judge1_old,judge1);
+    new_X=X-lr*decent_X;
+    decent_W1=X'*X*W1-X'*K1*X1+(lambda/2)*(W1-M1);
+    new_W1=W1-lr*decent_W1;
+    new_W1=(new_W1+new_W1')/2;
+    decent_W2=LiDARweight*(X'*X*W2-X'*K2*X2)+(lambda/2)*(W2-M2);
+    new_W2=W2-lr*decent_W2;
+    new_W2=(new_W2+new_W2')/2;
+    decent_K1=K1*X1*X1'-X*W1*X1';
+    new_K1=K1-lr*decent_K1;
+    decent_K2=LiDARweight*(K2*X2*X2'-X*W2*X2');
+    new_K2=K2-lr*decent_K2;
+    decent_E1=beta*sign(E1)+(lambda/2)*(M1-W1);
+    new_E1=E1-lr*decent_E1;
+    new_E1=(new_E1+new_E1')/2;
+    decent_E2=beta*sign(E2)+(lambda/2)*(M2-W2);
+    new_E2=E2-lr*decent_E2;
+    new_E2=(new_E2+new_E2')/2;
+    decent_Y1=((Y1/(2*lambda))+W1-Z-E1/2);
+    new_Y1=Y1-lr*decent_Y1;
+    new_Y1=(new_Y1+new_Y1')/2;
+    decent_Y2=((Y2/(2*lambda))+W2-Z-E2/2);
+    new_Y2=Y2-lr*decent_Y2;
+    new_Y2=(new_Y2+new_Y2')/2;
+    [U,S,V]=svds(Z,50);
+    U=sparse(U);
+    V=sparse(V);
+    decent_Z=beta*(U*V')+(lambda/2)*(M1-W1)+(lambda/2)*(M2-W2);
+    new_Z=Z-lr*decent_Z;
+    new_Z=(new_Z+new_Z')/2;
+    judge1_old=judge1;
+    judge1=norm(X-new_X,inf);
+    disp([num2str(i),',',num2str(judge1),',',num2str(lr)])
+    X=new_X;
+    W1=new_W1;
+    W2=new_W2;
+    K1=new_K1;
+    K2=new_K2;
+    E1=new_E1;
+    E2=new_E2;
+    Y1=new_Y1;
+    Y2=new_Y2;
+    Z=new_Z;
+    if judge1<1*10^(-10)
+        break;
+    end
+end
